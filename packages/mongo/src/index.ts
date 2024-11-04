@@ -1,5 +1,5 @@
 import { BSONType, ClientSession, Collection, Db, IndexDescription, Long, MongoClient, MongoClientOptions, MongoError, ObjectId } from 'mongodb'
-import { Binary, Dict, isNullable, makeArray, mapValues, noop, omit, pick } from 'cosmokit'
+import { Binary, Dict, isNullable, makeArray, mapValues, noop, omit, pick, remove } from 'cosmokit'
 import { Driver, Eval, executeUpdate, Field, hasSubquery, Query, RuntimeError, Selection, z } from 'minato'
 import { URLSearchParams } from 'url'
 import { Builder } from './builder'
@@ -7,6 +7,14 @@ import zhCN from './locales/zh-CN.yml'
 import enUS from './locales/en-US.yml'
 
 const tempKey = '__temp_minato_mongo__'
+
+interface TableMeta {
+  _id: string
+  virtual?: boolean
+  migrate?: boolean
+  autoInc?: number
+  fields?: string[]
+}
 
 export class MongoDriver extends Driver<MongoDriver.Config> {
   static name = 'mongo'
@@ -128,32 +136,41 @@ export class MongoDriver extends Driver<MongoDriver.Config> {
     const coll = this.db.collection(table)
     const bulk = coll.initializeOrderedBulkOp()
     const virtualKey = this.getVirtualKey(table)
+    const metaTable = this.db.collection<TableMeta>('_fields')
+    const meta = { _id: table }, found = await metaTable.findOne(meta)
+    if (!found?.fields) {
+      this.logger.info('initializing fields for table %s', table)
+      await metaTable.updateOne(meta, { $set: { fields: Object.keys(fields) } }, { upsert: true })
+      return
+    }
     for (const key in fields) {
       if (virtualKey === key) continue
       const { initial, legacy = [] } = fields[key]!
       if (!Field.available(fields[key])) continue
-      const filter = { [key]: { $exists: false } }
-      for (const oldKey of legacy) {
-        bulk
-          .find({ ...filter, [oldKey]: { $exists: true } })
-          .update({ $rename: { [oldKey]: key } })
-        filter[oldKey] = { $exists: false }
-      }
-      bulk.find(filter).update({ $set: { [key]: initial ?? null } })
-      if (legacy.length) {
-        const $unset = Object.fromEntries(legacy.map(key => [key, '']))
-        bulk.find({}).update({ $unset })
+      if (found.fields.includes(key)) continue
+      this.logger.info('auto migrating field %s for table %s', key, table)
+
+      const oldKey = found.fields.find(field => legacy.includes(field))
+      if (oldKey) {
+        remove(found.fields, oldKey)
+        found.fields.push(key)
+        bulk.find({ [oldKey]: { $exists: true } }).update({ $rename: { [oldKey]: key } })
+      } else {
+        found.fields.push(key)
+        bulk.find({}).update({ $set: { [key]: initial ?? null } })
       }
     }
-    if (bulk.batches.length) await bulk.execute()
+    if (bulk.batches.length) {
+      await bulk.execute()
+      await metaTable.updateOne(meta, { $set: { fields: found.fields } })
+    }
   }
 
   private async _migrateVirtual(table: string) {
-    const { primary, fields: modelFields } = this.model(table)
+    const { primary, fields } = this.model(table)
     if (Array.isArray(primary)) return
-    const fields = this.db.collection('_fields')
-    const meta: Dict = { table, field: primary }
-    const found = await fields.findOne(meta)
+    const metaTable = this.db.collection<TableMeta>('_fields')
+    const meta = { _id: table }, found = await metaTable.findOne(meta)
     let virtual = !!found?.virtual
     const useVirtualKey = !!this.getVirtualKey(table)
     // If  _fields table was missing for any reason
@@ -161,19 +178,20 @@ export class MongoDriver extends Driver<MongoDriver.Config> {
     if (!found) {
       const doc = await this.db.collection(table).findOne()
       if (doc) {
-        virtual = typeof doc._id !== 'object' || (typeof primary === 'string' && modelFields[primary]?.deftype === 'primary')
-      } else {
-        // Empty collection, just set meta and return
-        fields.updateOne(meta, { $set: { virtual: useVirtualKey } }, { upsert: true })
-        this.logger.info('Successfully reconfigured table %s', table)
+        virtual = typeof doc._id !== 'object' || (typeof primary === 'string' && fields[primary]?.deftype === 'primary')
+      }
+      if (!doc || virtual === useVirtualKey) {
+        // Empty table or already configured
+        await metaTable.updateOne(meta, { $set: { virtual: useVirtualKey } }, { upsert: true })
+        this.logger.info('successfully reconfigured table %s', table)
         return
       }
     }
     if (virtual === useVirtualKey) return
-    this.logger.info('Start migrating table %s', table)
+    this.logger.info('start migrating table %s', table)
 
     if (found?.migrate && await this.db.listCollections({ name: '_migrate_' + table }).hasNext()) {
-      this.logger.info('Last time crashed, recover')
+      this.logger.info('last time crashed, recover')
     } else {
       await this.db.dropCollection('_migrate_' + table).catch(noop)
       await this.db.collection(table).aggregate([
@@ -183,23 +201,22 @@ export class MongoDriver extends Driver<MongoDriver.Config> {
         { $unset: ['_temp_id', ...useVirtualKey ? [primary] : []] },
         { $out: '_migrate_' + table },
       ]).toArray()
-      await fields.updateOne(meta, { $set: { migrate: true } }, { upsert: true })
+      await metaTable.updateOne(meta, { $set: { migrate: true } }, { upsert: true })
     }
     await this.db.dropCollection(table).catch(noop)
     await this.db.renameCollection('_migrate_' + table, table)
-    await fields.updateOne(meta,
+    await metaTable.updateOne(meta,
       { $set: { virtual: useVirtualKey, migrate: false } },
       { upsert: true },
     )
-    this.logger.info('Successfully migrated table %s', table)
+    this.logger.info('successfully migrated table %s', table)
   }
 
   private async _migratePrimary(table: string) {
     const { primary, autoInc } = this.model(table)
     if (Array.isArray(primary) || !autoInc) return
-    const fields = this.db.collection('_fields')
-    const meta: Dict = { table, field: primary }
-    const found = await fields.findOne(meta)
+    const metaTable = this.db.collection<TableMeta>('_fields')
+    const meta = { _id: table }, found = await metaTable.findOne(meta)
     if (!isNullable(found?.autoInc)) return
 
     const coll = this.db.collection(table)
@@ -215,9 +232,8 @@ export class MongoDriver extends Driver<MongoDriver.Config> {
     }
 
     const [latest] = await coll.find().sort(this.getVirtualKey(table) ? '_id' : primary, -1).limit(1).toArray()
-    await fields.updateOne(meta, {
-      $set: { autoInc: latest ? +latest[this.getVirtualKey(table) ? '_id' : primary] : 0 },
-      $setOnInsert: { virtual: !!this.getVirtualKey(table) },
+    await metaTable.updateOne(meta, {
+      $set: { autoInc: latest ? +latest[this.getVirtualKey(table) ? '_id' : primary] : 0, virtual: !!this.getVirtualKey(table) },
     }, { upsert: true })
   }
 
@@ -255,6 +271,7 @@ export class MongoDriver extends Driver<MongoDriver.Config> {
   }
 
   async drop(table: string) {
+    await this.db.collection<TableMeta>('_fields').deleteOne({ _id: table }, { session: this.session })
     await this.db.dropCollection(table, { session: this.session })
   }
 
@@ -397,8 +414,8 @@ export class MongoDriver extends Driver<MongoDriver.Config> {
     if (typeof primary === 'string' && autoInc && model.fields[primary]?.deftype !== 'primary') {
       const missing = data.filter(item => !(primary in item))
       if (!missing.length) return
-      const doc = await this.db.collection('_fields').findOneAndUpdate(
-        { table, field: primary },
+      const doc = await this.db.collection<TableMeta>('_fields').findOneAndUpdate(
+        { _id: table },
         { $inc: { autoInc: missing.length } },
         { session: this.session, upsert: true },
       )
