@@ -37,7 +37,7 @@ export namespace Relation {
   }
 
   export type Include<T, S> = boolean | {
-    [P in keyof T]?: T[P] extends MaybeArray<infer U> | undefined ? U extends S ? Include<U, S> : Query.Expr<Flatten<U>> : never
+    [P in keyof T]?: T[P] extends MaybeArray<infer U> | undefined ? U extends S ? Include<U, S> : (U extends (infer I)[] ? Query.Expr<I> : never) : never
   }
 
   export type SetExpr<S extends object = any> = ((row: Row<S>) => Update<S>) | {

@@ -241,6 +241,19 @@ namespace SelectionTests {
         { value: 0, sum: 1, count: 1 },
         { value: 2, sum: 5, count: 2 },
       ])
+
+      await expect(database
+        .select('foo')
+        .groupBy('value', row => ({
+          sum: $.sum(row.id),
+          count: $.count(row.id),
+        }))
+        .orderBy('value')
+        .execute()
+      ).to.eventually.deep.equal([
+        { value: 0, sum: 1, count: 1 },
+        { value: 2, sum: 5, count: 2 },
+      ])
     })
 
     it('having', async () => {

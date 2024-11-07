@@ -297,6 +297,24 @@ namespace JsonTests {
       ])
     })
 
+    it('$.object using spread', async () => {
+      const res = await database.select('foo')
+        .project({
+          obj: row => $.object({
+            id2: row.id,
+            ...row,
+          })
+        })
+        .orderBy(row => row.obj.id)
+        .execute()
+
+      expect(res).to.deep.equal([
+        { obj: { id2: 1, id: 1, value: 0 } },
+        { obj: { id2: 2, id: 2, value: 2 } },
+        { obj: { id2: 3, id: 3, value: 2 } },
+      ])
+    })
+
     it('$.object in json', async () => {
       const res = await database.select('bar')
         .project({

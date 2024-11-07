@@ -1,4 +1,4 @@
-import { defineProperty, Dict, filterKeys, mapValues } from 'cosmokit'
+import { defineProperty, Dict, filterKeys, mapValues, omit } from 'cosmokit'
 import { Driver } from './driver.ts'
 import { Eval, executeEval, isAggrExpr, isEvalExpr } from './eval.ts'
 import { Field, Model } from './model.ts'
@@ -92,7 +92,13 @@ class Executable<S = any, T = any> {
     Object.assign(this, payload)
     defineProperty(this, 'driver', driver)
     defineProperty(this, 'model', driver.model(this.table))
-    defineProperty(this, 'row', createRow(this.ref, {}, '', this.model))
+    defineProperty(this, 'row', createRow(this.ref, Eval.object(createRow(this.ref, {}, '', this.model)), '', this.model))
+  }
+
+  protected isCallaback(query: any): query is Selection.Callback<S> {
+    if (typeof query !== 'function') return false
+    const fields = query(this.row)
+    return isEvalExpr(omit(fields, ['$object']))
   }
 
   protected resolveQuery(query?: Query<S>): Query.Expr<S>
@@ -111,17 +117,20 @@ class Executable<S = any, T = any> {
     return query
   }
 
-  protected resolveField(field: FieldLike<S>): Eval.Expr {
+  protected resolveField(field: FieldLike<S> | Eval.Expr): Eval.Expr {
     if (typeof field === 'string') {
       return this.row[field]
     } else if (typeof field === 'function') {
       return field(this.row)
+    } else if (isEvalExpr(field)) {
+      return field
     } else {
       throw new TypeError('invalid field definition')
     }
   }
 
-  protected resolveFields(fields: string | string[] | Dict<FieldLike<S>>) {
+  protected resolveFields(fields: string | string[] | Dict<FieldLike<S>> | FieldCallback) {
+    if (typeof fields === 'function') fields = fields(this.row)
     if (typeof fields === 'string') fields = [fields]
     if (Array.isArray(fields)) {
       const modelFields = Object.keys(this.model.fields)
@@ -135,6 +144,7 @@ class Executable<S = any, T = any> {
       return Object.fromEntries(entries)
     } else {
       const entries = Object.entries(fields).flatMap(([key, field]) => {
+        if (key.startsWith('$')) return []
         const expr = this.resolveField(field)
         if (expr['$object'] && !Type.fromTerm(expr).ignoreNull) {
           return Object.entries(expr['$object']).map(([key2, expr2]) => [`${key}.${key2}`, expr2])
@@ -161,6 +171,12 @@ type FieldType<S, T extends FieldLike<S>> =
 
 type FieldMap<S, M extends Dict<FieldLike<S>>> = {
   [K in keyof M]: FieldType<S, M[K]>
+}
+
+type FieldCallback<S = any, M extends Dict<Eval.Term<any>> = any> = (row: Row<S>) => M
+
+type EvalMap<M extends Dict<Eval.Term<any>>> = {
+  [K in keyof M]: Eval<M[K]>
 }
 
 export namespace Selection {
@@ -229,6 +245,12 @@ export class Selection<S = any> extends Executable<S, S[]> {
     query?: Selection.Callback<S, boolean>,
   ): Selection<FlatPick<S, K> & FieldMap<S, U>>
 
+  groupBy<K extends FlatKeys<S>, U extends object>(
+    fields: K | K[],
+    extra?: FieldCallback<S, U>,
+    query?: Selection.Callback<S, boolean>,
+  ): Selection<FlatPick<S, K> & EvalMap<U>>
+
   groupBy<K extends Dict<FieldLike<S>>>(fields: K, query?: Selection.Callback<S, boolean>): Selection<FieldMap<S, K>>
   groupBy<K extends Dict<FieldLike<S>>, U extends Dict<FieldLike<S>>>(
     fields: K,
@@ -236,10 +258,16 @@ export class Selection<S = any> extends Executable<S, S[]> {
     query?: Selection.Callback<S, boolean>,
   ): Selection<FieldMap<S, K & U>>
 
+  groupBy<K extends Dict<FieldLike<S>>, U extends object>(
+    fields: K,
+    extra?: FieldCallback<S, U>,
+    query?: Selection.Callback<S, boolean>,
+  ): Selection<FieldMap<S, K> & EvalMap<U>>
+
   groupBy(fields: any, ...args: any[]) {
     this.args[0].fields = this.resolveFields(fields)
     this.args[0].group = Object.keys(this.args[0].fields!)
-    const extra = typeof args[0] === 'function' ? undefined : args.shift()
+    const extra = this.isCallaback(args[0]) ? undefined : args.shift()
     Object.assign(this.args[0].fields!, this.resolveFields(extra || {}))
     if (args[0]) this.having(args[0])
     return new Selection(this.driver, this)
@@ -252,7 +280,8 @@ export class Selection<S = any> extends Executable<S, S[]> {
 
   project<K extends FlatKeys<S>>(fields: K | readonly K[]): Selection<FlatPick<S, K>>
   project<U extends Dict<FieldLike<S>>>(fields: U): Selection<FieldMap<S, U>>
-  project(fields: Keys<S>[] | Dict<FieldLike<S>>) {
+  project<U extends object>(fields: FieldCallback<S, U>): Selection<EvalMap<U>>
+  project(fields: Keys<S>[] | Dict<FieldLike<S>> | FieldCallback) {
     this.args[0].fields = this.resolveFields(fields)
     return new Selection(this.driver, this)
   }

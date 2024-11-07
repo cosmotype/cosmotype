@@ -1,4 +1,4 @@
-import { defineProperty, isNullable, mapValues } from 'cosmokit'
+import { defineProperty, filterKeys, isNullable, mapValues } from 'cosmokit'
 import { AtomicTypes, Comparable, Flatten, isComparable, isEmpty, makeRegExp, Row, Values } from './utils.ts'
 import { Type } from './type.ts'
 import { Field, Relation } from './model.ts'
@@ -320,9 +320,11 @@ Eval.object = (fields: any) => {
       .filter(([, field]) => Field.available(field))
       .filter(([path]) => path.startsWith(prefix))
       .map(([k]) => [k.slice(prefix.length), fields[k.slice(prefix.length)]]))
-    return Eval('object', fields, Type.Object(mapValues(fields, (value) => Type.fromTerm(value))))
+    return Object.assign(Eval('object', fields, Type.Object(mapValues(fields, (value) => Type.fromTerm(value)))), fields)
   }
-  return Eval('object', fields, Type.Object(mapValues(fields, (value) => Type.fromTerm(value)))) as any
+  // filter out nested spread $object
+  fields = filterKeys(fields, key => key !== '$object')
+  return Object.assign(Eval('object', fields, Type.Object(mapValues(fields, (value) => Type.fromTerm(value)))), fields)
 }
 
 Eval.array = unary('array', (expr, table) => Array.isArray(table)

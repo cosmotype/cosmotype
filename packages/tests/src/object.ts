@@ -235,6 +235,25 @@ namespace ObjectOperations {
         t: 'meta',
       }).execute()).to.eventually.have.deep.members([{ t: table[1].meta }])
     })
+
+    it('accumlate project', async () => {
+      const table = await setup(database)
+      await expect(database.select('object', {
+        'meta.a': '666',
+      }).project(row => ({
+        t: 'meta',
+        t2: row.meta.embed.c,
+        t3: $.concat(row.meta.a, 'my'),
+        ...row.meta,
+        ...row,
+      })).execute()).to.eventually.have.deep.members([{
+        t: table[1].meta,
+        t2: 'world',
+        t3: '666my',
+        ...table[1].meta,
+        ...table[1],
+      }])
+    })
   }
 }
 
