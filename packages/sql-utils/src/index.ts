@@ -333,7 +333,7 @@ export class Builder {
    */
   protected transform(value: string, type: Type | Eval.Expr | undefined, method: 'encode' | 'decode' | 'load' | 'dump', miss?: any) {
     type = Type.isType(type) ? type : Type.fromTerm(type)
-    const transformer = this.transformers[type.type] ?? this.transformers[this.driver.database.types[type.type]?.type!]
+    const transformer = this.transformers[type.type] ?? this.transformers[this.driver.newtypes[type.type]?.type!]
     return transformer?.[method] ? transformer[method]!(value) : (miss ?? value)
   }
 
@@ -584,7 +584,7 @@ export class Builder {
       let res = value
       res = Type.transform(res, type, (value, type) => this.dump(value, type, root))
       res = converter?.dump ? converter.dump(res) : res
-      const ancestor = this.driver.database.types[type.type]?.type
+      const ancestor = this.driver.newtypes[type.type]?.type
       if (!root && !ancestor) res = this.transform(res, type, 'dump')
       res = this.dump(res, ancestor ? Type.fromField(ancestor) : undefined, root)
       return res
@@ -608,7 +608,7 @@ export class Builder {
     if (Type.isType(type) || isEvalExpr(type)) {
       type = Type.isType(type) ? type : Type.fromTerm(type)
       const converter = this.driver.types[(root && value && type.type === 'json') ? 'json' : type.type]
-      const ancestor = this.driver.database.types[type.type]?.type
+      const ancestor = this.driver.newtypes[type.type]?.type
       let res = this.load(value, ancestor ? Type.fromField(ancestor) : undefined, root)
       res = this.transform(res, type, 'load')
       res = converter?.load ? converter.load(res) : res

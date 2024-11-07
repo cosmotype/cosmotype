@@ -78,10 +78,12 @@ export abstract class Driver<T = any, C extends Context = Context> {
   public database: Database<any, any, C>
   public logger: Logger
   public types: Dict<Driver.Transformer> = Object.create(null)
+  public newtypes: Dict<Field.Transform>
 
   constructor(public ctx: C, public config: T) {
     this.database = ctx.model
     this.logger = ctx.logger(this.constructor.name)
+    this.newtypes = this.database.types
 
     ctx.on('ready', async () => {
       await Promise.resolve()
