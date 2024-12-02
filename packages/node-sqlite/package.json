@@ -1,0 +1,49 @@
+{
+  "name": "@minatojs/driver-node-sqlite",
+  "version": "4.5.0",
+  "description": "node:sqlite Driver for Minato",
+  "type": "module",
+  "main": "lib/index.cjs",
+  "module": "lib/index.mjs",
+  "typings": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./lib/index.mjs",
+      "require": "./lib/index.cjs",
+      "types": "./lib/index.d.ts"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "src"
+  ],
+  "author": "Shigma <shigma10826@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cordiverse/minato.git",
+    "directory": "packages/node-sqlite"
+  },
+  "bugs": {
+    "url": "https://github.com/cordiverse/minato/issues"
+  },
+  "homepage": "https://github.com/cordiverse/minato/packages/node-sqlite#readme",
+  "keywords": [
+    "orm",
+    "database",
+    "driver",
+    "sqlite"
+  ],
+  "peerDependencies": {
+    "minato": "^3.4.3"
+  },
+  "devDependencies": {
+    "@minatojs/tests": "^2.4.1"
+  },
+  "dependencies": {
+    "@minatojs/sql-utils": "^5.4.1",
+    "cosmokit": "^1.6.2"
+  }
+}
